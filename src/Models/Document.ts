@@ -9,13 +9,27 @@ export interface IDocument extends MongoDocument {
   title: string;
   originalName: string;
   storageUrl: string;
-  uploadStatus: "uploading" | "processing" | "completed" | "failed";
+  uploadStatus:
+    | "uploading"
+    | "processing"
+    | "processed"
+    | "completed"
+    | "failed";
+  embeddingStatus?:
+    | "pending"
+    | "processing"
+    | "completed"
+    | "partial"
+    | "failed";
+  embeddedAt?: Date;
   workspaceId: Types.ObjectId;
   uploadedBy: Types.ObjectId; // User ID
   mimeType?: string;
   size?: number;
   // For tracking processing
   errorMessage?: string;
+  pageCount?: number;
+  processedAt?: Date;
   _id: Types.ObjectId;
 }
 
@@ -38,6 +52,8 @@ const DocumentSchema: Schema<IDocument> = new Schema(
     mimeType: { type: String },
     size: { type: Number },
     errorMessage: { type: String },
+    pageCount: { type: Number },
+    processedAt: { type: Date },
   },
   {
     timestamps: true,
