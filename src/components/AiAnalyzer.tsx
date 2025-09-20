@@ -42,6 +42,8 @@ import {
   MessageSkeleton,
 } from "@/components/LoadingSkeletons";
 import { MessageSuggestion, QuickActionWithIcon } from "@/types";
+import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
+import { InfoIcon } from "lucide-react";
 
 // Icon mapping for quick actions
 const iconMap: Record<string, React.ReactNode> = {
@@ -289,6 +291,17 @@ const WorkspaceContent: React.FC = () => {
             </div>
           )}
         </div>
+        {/* Vercel  Limit Notice */}
+        <div className="flex justify-center">
+          <Alert className="mb-4 bg-blue-900/20 border-blue-700 ">
+            <InfoIcon className="h-4 w-4 text-blue-400" />
+            <AlertTitle className="text-blue-300">File Size Limit</AlertTitle>
+            <AlertDescription className="text-red-500 text-sm">
+              Due to Vercel platform limitations, files must be under{" "}
+              <strong>4.5MB</strong>
+            </AlertDescription>
+          </Alert>
+        </div>
 
         {/* Documents List */}
         <div className="flex-1 overflow-hidden">
@@ -456,7 +469,6 @@ const WorkspaceContent: React.FC = () => {
             </div>
           </div>
         )}
-
         {/* Enhanced Message Suggestions */}
         {showSuggestions && messageSuggestions.length > 0 && (
           <div className="p-3 sm:p-4 border-b border-gray-800 bg-gray-900/30">
@@ -506,7 +518,6 @@ const WorkspaceContent: React.FC = () => {
             </div>
           </div>
         )}
-
         {/* Messages */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 sm:space-y-6 bg-black">
           {currentMessages.length === 0 && !activeDocumentId ? (
@@ -697,7 +708,6 @@ const WorkspaceContent: React.FC = () => {
           )}
           <div ref={messagesEndRef} />
         </div>
-
         {/* Input Area */}
         <div className="border-t border-gray-800 bg-black">
           <div className="p-4 sm:p-6 flex items-center gap-2 sm:gap-3">
