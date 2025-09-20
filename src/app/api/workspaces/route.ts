@@ -1,4 +1,4 @@
-//src/app/api/workspaces/[workspaceId]/route.ts
+// src/app/api/workspaces/[workspaceId]/route.ts
 
 import { NextResponse } from "next/server";
 import dbConnect from "@/lib/db";
@@ -9,8 +9,40 @@ import mongoose, { ClientSession } from "mongoose";
 
 // --- Type guard for Mongo errors ---
 function isMongoError(err: unknown): err is { code: number; message: string } {
-  return typeof err === "object" && err !== null && "code" in err;
+  return typeof err === "object" && err !== null && "code" in (err as object);
 }
+
+type Role = "admin" | "member";
+
+type WorkspacePopulated = {
+  _id: mongoose.Types.ObjectId | string;
+  name: string;
+  createdAt?: Date;
+  updatedAt?: Date;
+  members?: mongoose.Types.ObjectId[] | string[];
+};
+
+type UserWithWorkspaces = {
+  _id: mongoose.Types.ObjectId;
+  email?: string;
+  workspaceIds: WorkspacePopulated[]; // populated
+  roles?: Map<string, Role>;
+
+  save: (opts?: unknown) => Promise<unknown>;
+};
+
+type DbUser = {
+  _id: mongoose.Types.ObjectId;
+  email?: string;
+  workspaceIds: (mongoose.Types.ObjectId | string)[];
+  roles?: Map<string, Role>;
+  save: (opts?: unknown) => Promise<unknown>;
+};
+
+type WorkspaceDoc = {
+  _id: mongoose.Types.ObjectId;
+  members: (mongoose.Types.ObjectId | string)[];
+};
 
 // GET - Get user's workspaces
 export async function GET() {
@@ -22,30 +54,29 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const user = await User.findOne({ email: authSession.user.email }).populate(
-      {
-        path: "workspaceIds",
-        select: "name  members createdAt ",
-      }
-    );
+    // Populate workspaceIds so each item has _id, name, timestamps, members
+    const user = (await User.findOne({
+      email: authSession.user.email,
+    }).populate({
+      path: "workspaceIds",
+      select: "name members createdAt updatedAt",
+    })) as unknown as UserWithWorkspaces | null;
 
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    // Transform the workspaces to include user's role
-    const workspaces = user.workspaceIds.map((workspace: any) => ({
+    const workspaces = (user.workspaceIds || []).map((workspace) => ({
       _id: workspace._id,
       name: workspace.name,
       createdAt: workspace.createdAt,
       updatedAt: workspace.updatedAt,
-      role: user.roles?.get(workspace._id.toString()) || "member",
+      role: (user.roles?.get(workspace._id.toString()) as Role) || "member",
     }));
 
     return NextResponse.json({ workspaces }, { status: 200 });
   } catch (error: unknown) {
     console.error("Get workspaces error:", error);
-
     return NextResponse.json(
       { error: "Failed to fetch workspaces" },
       { status: 500 }
@@ -77,9 +108,9 @@ export async function DELETE(req: Request) {
 
     session.startTransaction();
 
-    const user = await User.findOne({ email: authSession.user.email }).session(
+    const user = (await User.findOne({ email: authSession.user.email }).session(
       session
-    );
+    )) as unknown as DbUser | null;
 
     if (!user) {
       await session.abortTransaction();
@@ -87,7 +118,7 @@ export async function DELETE(req: Request) {
     }
 
     // Check if user is admin of the workspace
-    const userRole = user.roles?.get(workspaceId);
+    const userRole = user.roles?.get(workspaceId) as Role | undefined;
     if (userRole !== "admin") {
       await session.abortTransaction();
       return NextResponse.json(
@@ -96,8 +127,10 @@ export async function DELETE(req: Request) {
       );
     }
 
-    // Find the workspace to ensure it exists
-    const workspace = await Workspace.findById(workspaceId).session(session);
+    // Find the workspace to ensure it exists and get members
+    const workspace = (await Workspace.findById(workspaceId).session(
+      session
+    )) as unknown as WorkspaceDoc | null;
     if (!workspace) {
       await session.abortTransaction();
       return NextResponse.json(
@@ -111,7 +144,7 @@ export async function DELETE(req: Request) {
 
     // Remove workspace from user's workspaceIds and roles
     user.workspaceIds = user.workspaceIds.filter(
-      (id: mongoose.Types.ObjectId) => id.toString() !== workspaceId
+      (id: mongoose.Types.ObjectId | string) => id.toString() !== workspaceId
     );
 
     if (user.roles) {
@@ -120,7 +153,7 @@ export async function DELETE(req: Request) {
 
     await user.save({ session });
 
-    // Remove workspace from all other members
+    // Remove workspace from all other members and unset their role entry
     await User.updateMany(
       {
         _id: { $in: workspace.members },
@@ -145,6 +178,13 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
+    if (isMongoError(error) && error.code === 11000) {
+      return NextResponse.json(
+        { error: "Duplicate key error" },
+        { status: 409 }
+      );
+    }
+
     console.error("Workspace deletion error:", error);
 
     return NextResponse.json(
@@ -156,7 +196,7 @@ export async function DELETE(req: Request) {
   }
 }
 
-// POST - Create workspace (existing code)
+// POST - Create workspace
 export async function POST(req: Request) {
   const session: ClientSession = await mongoose.startSession();
 
@@ -170,7 +210,6 @@ export async function POST(req: Request) {
 
     const { name }: { name?: string } = await req.json();
 
-    // ✅ Strong input validation
     if (!name || typeof name !== "string" || !name.trim()) {
       return NextResponse.json(
         { error: "Valid workspace name is required" },
@@ -180,17 +219,17 @@ export async function POST(req: Request) {
 
     session.startTransaction();
 
-    const user = await User.findOne({ email: authSession.user.email }).session(
+    const user = (await User.findOne({ email: authSession.user.email }).session(
       session
-    );
+    )) as unknown as DbUser | null;
 
     if (!user) {
       await session.abortTransaction();
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    // ✅ Create workspace in transaction
-    const [newWorkspace] = await Workspace.create(
+    // Create workspace within transaction
+    const [newWorkspace] = (await Workspace.create(
       [
         {
           name: name.trim(),
@@ -199,7 +238,9 @@ export async function POST(req: Request) {
         },
       ],
       { session }
-    );
+    )) as unknown as (WorkspacePopulated & {
+      createdBy?: mongoose.Types.ObjectId;
+    })[];
 
     if (!newWorkspace) {
       await session.abortTransaction();
@@ -209,17 +250,16 @@ export async function POST(req: Request) {
       );
     }
 
-    // ✅ Update user roles + workspaces
-    user.workspaceIds.push(newWorkspace._id);
+    // Update user roles + workspace list
+    user.workspaceIds.push(newWorkspace._id.toString());
 
     if (!user.roles) {
-      user.roles = new Map<string, "admin" | "member">();
+      user.roles = new Map<string, Role>();
     }
     user.roles.set(newWorkspace._id.toString(), "admin");
 
     await user.save({ session });
 
-    // ✅ Commit transaction
     await session.commitTransaction();
 
     return NextResponse.json({ workspace: newWorkspace }, { status: 201 });
